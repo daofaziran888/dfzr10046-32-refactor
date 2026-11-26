@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 from app.seed import SEED_ROWS
@@ -11,9 +12,23 @@ from app.seed import SEED_ROWS
 
 class Store:
     def __init__(self) -> None:
+        self._lock = threading.RLock()
         self._tables: dict[str, list[dict[str, Any]]] = {
             name: [dict(row) for row in rows] for name, rows in SEED_ROWS.items()
         }
+
+    @property
+    def lock(self) -> threading.RLock:
+        """跨模块动作在解析与写入时需要同一把锁保护记录快照。"""
+        return self._lock
+
+    def reload(self) -> None:
+        """把内存表恢复到种子数据，供测试或本地重置使用。"""
+        with self._lock:
+            self._tables = {
+                name: [dict(row) for row in rows]
+                for name, rows in SEED_ROWS.items()
+            }
 
     def module_names(self) -> list[str]:
         return sorted(self._tables)

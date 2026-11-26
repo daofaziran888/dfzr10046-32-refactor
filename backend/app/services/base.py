@@ -6,6 +6,14 @@ from typing import Any
 from app.store import store
 
 
+def fingerprint(entry: dict[str, Any]) -> str:
+    """记录内容的稳定摘要：任何字段被别的请求改写后写入资格即失效。"""
+    import hashlib
+
+    material = "|".join(f"{key}={entry.get(key)!r}" for key in sorted(entry))
+    return hashlib.sha1(material.encode("utf-8")).hexdigest()
+
+
 class BaseModuleService:
     MODULE = ""
     ENTITY = ""
@@ -43,6 +51,21 @@ class BaseModuleService:
     def get_entry(self, entry_id: int) -> dict[str, Any] | None:
         return store.find(self.MODULE, entry_id)
 
+    def issue_write_claim(
+        self, entry_id: int, action: str,
+    ) -> tuple[str | None, str | None]:
+        """由目标资源签发写入资格：返回 (记录摘要, 拒绝原因)。
+
+        默认只要记录存在且动作在可执行范围内就签发；模块可以覆写来叠加状态
+        门槛（例如已失效的血缘边不再接受核对）。解析阶段签发、执行前复核。
+        """
+        entry = store.find(self.MODULE, entry_id)
+        if entry is None:
+            return None, f"{self.ENTITY} {entry_id} 不存在或已归档"
+        if action not in self.ACTION_RULES:
+            return None, f"动作「{action}」不属于{self.MODULE}可执行范围"
+        return fingerprint(entry), None
+
     def create_entry(self, values: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str]]:
         missing = [
             field for field in self.REQUIRED_FIELDS
@@ -60,16 +83,37 @@ class BaseModuleService:
         return entry, []
 
     def run_action(self, entry_id: int, action: str) -> tuple[dict[str, Any] | None, str]:
+        return self.run_action_for(entry_id, action, {})
+
+    def action_guard(self, action: str) -> str | None:
+        """动作准入：返回非空字符串表示拒绝，可由模块服务扩展。"""
+        return None
+
+    def run_action_for(
+        self, entry_id: int, action: str, extra: dict[str, Any],
+    ) -> tuple[dict[str, Any] | None, str]:
+        """执行动作并调用模块钩子，``extra`` 携带解析阶段准备的上下文。"""
         entry = store.find(self.MODULE, entry_id)
         if entry is None:
             return None, f"{self.ENTITY} {entry_id} 不存在或已归档"
+        rejected = self.action_guard(action)
+        if rejected:
+            return None, rejected
         target = self.ACTION_RULES.get(action)
         if target is None:
             return None, f"动作「{action}」不属于{self.MODULE}可执行范围"
         entry["status"] = target
         entry["pending"] = target != self.STATUS_ORDER[-1]
         entry["abnormal"] = action in self.NEGATIVE_ACTIONS
-        return entry, f"{self.ENTITY}已{action}"
+        message = f"{self.ENTITY}已{action}"
+        self.after_action(entry, action, extra)
+        return entry, message
+
+    def after_action(
+        self, entry: dict[str, Any], action: str, extra: dict[str, Any],
+    ) -> None:
+        """动作写入后的模块扩展点（如记录影响范围快照），默认不做任何事。"""
+        return None
 
     def domain_snapshot(self) -> dict[str, Any]:
         """输出模块级数据质量快照，供跨模块消费和题位源码锚点使用。"""

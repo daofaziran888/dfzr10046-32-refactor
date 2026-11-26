@@ -30,9 +30,11 @@ export async function runAction(
   id: number,
   action: string,
 ): Promise<ActionResult> {
+  // 回包带上发起模块与动作，页面据此把结果接回本次认领；后端未声明
+  // origin_module 时同样按路径模块归属处理，旧调用方无需改动。
   const response = await request(`/api/${key}/${id}/actions`, {
     method: 'POST',
-    body: JSON.stringify({ action }),
+    body: JSON.stringify({ action, origin_module: key, return_meta: true }),
   })
   return await response.json()
 }

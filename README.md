@@ -41,6 +41,8 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 cd frontend
 npm ci
 npm run dev
+# 单元测试（在途认领/回包归属）
+npm test
 ```
 
 前端默认监听 `http://127.0.0.1:5176/`，dev server 不会自动打开浏览器，
@@ -80,6 +82,28 @@ npm run dev
   `frontend/src/domain/<模块>.ts`，用于承载真实业务差异并维持36题位容量。
 - 列表接口统一返回 `{ items, total, page, size }`，动作接口统一返回 `{ ok, message }`。
 - 状态流转只允许在 `app/services` 里改，路由层不做业务判断。
+
+## 跨模块动作分派
+
+动作入口 `POST /api/{module}/{id}/actions` 把「解析」和「执行」分开，两者共用一个
+进程级分派器 `app/services/dispatch.py`：
+
+- 只传 `{ "action": "..." }` 时一步完成，回包仍是原来的 `{ ok, message, entry }`，
+  现有调用方无需改动；
+- 传 `"phase": "resolve"` 只在途认领：确认模块/动作/记录归属、签发 `token`，
+  不写入记录；`"phase": "commit"` 凭 `token` 执行，执行前重新核对写入资格，
+  期间记录被其他请求改写则返回「写入资格已过期」；
+- `origin_module` / `target_module` 用于声明发起归属与目标模块，和路径模块不一致
+  即按越权拒绝，不写入任何模块的记录；`return_meta` 让回包附带
+  `module/action/token/origin_module`，前端据此把回包接回发起时的模块。
+
+资源上下文（`app/services/context.py`）用「模块 key + 记录号」区分不同页面里的
+相同数字 ID；血缘影响传播（`app/services/impact.py`）由重跑任务与血缘关系共用，
+只消费仍可受理（未被标记失效）的边：重跑排期受理时冻结一份影响范围，
+`GET /api/{module}/{id}/impact` 可同时读到已受理范围与下一次排期可采用的范围。
+
+前端 `src/api/inflight.ts` 按「模块 + 记录 + 动作」认领在途请求，回包归属不符时
+不结算，另一模块晚到的结果不会关闭当前模块的提交。
 
 领域：数据工程
 子方向：数仓与数据湖

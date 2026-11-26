@@ -30,6 +30,10 @@ export type PageResult = {
 export type ActionResult = {
   ok: boolean
   message: string
+  module?: string | null
+  action?: string | null
+  token?: string | null
+  origin_module?: string | null
 }
 
 export type OverviewResult = {
